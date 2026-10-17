@@ -6,16 +6,18 @@ kept in its own commit so a future QMK PR can exclude this directory.
 
 ## Active branch: Link OLED development
 
-This `feature/link-oled` branch stages custom screens for the wired CannonKeys
-Link. See the [Link development guide](keyboards/cannonkeys/link/keymaps/svenge/README.md).
+This `feature/link-oled` branch implements mirrored keypress dashboards, modifier
+and layer indicators, and matrix-rain/off modes for the wired CannonKeys Link. See the [Link development guide](keyboards/cannonkeys/link/keymaps/svenge/README.md).
 Select the matching `feature/link-oled` branch in the firmware repository, then:
 
 ```sh
 qmk compile -kb cannonkeys/link -km svenge
 ```
 
-The screen callbacks currently preserve the stock status panel and logo. This
-branch's build targets select Link only; the WT75-C project below remains on
+The right encoder push cycles Dashboard → Matrix rain → Off. Dashboard enters
+rain after 60 seconds idle and returns on activity. The saved Link VIA layout
+provides the compiled defaults. See [dashboard](previews/link/dashboard.png) and
+[rain](previews/link/rain.gif) previews. This branch's build targets select Link only; the WT75-C project below remains on
 userspace `main` and firmware `feature/wt75-c-led-matrix`.
 
 ## Build
