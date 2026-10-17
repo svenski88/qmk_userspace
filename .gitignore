@@ -3,3 +3,4 @@
 *.elf
 .build/
 __pycache__/
+*.uf2
