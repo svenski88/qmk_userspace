@@ -17,6 +17,8 @@ void link_screen_activity(link_screen_state_t *state, uint32_t now) {
 
 void link_screen_cycle(link_screen_state_t *state, uint8_t visible_mode, uint32_t now) {
     state->selected_mode = (visible_mode + 1) % 3;
+    state->rain_active = false;
+    state->timed_out = false;
     link_screen_activity(state, now);
 }
 
@@ -34,6 +36,9 @@ void link_screen_update(link_screen_state_t *state, const uint8_t physical[LINK_
         uint8_t rising = down & ~state->physical[row];
         if (down != state->physical[row]) {
             link_screen_activity(state, now);
+        }
+        if (rising && state->timed_out) {
+            state->timed_out = false;
         }
         held |= down != 0;
         state->physical[row] = down;
@@ -58,6 +63,23 @@ void link_screen_update(link_screen_state_t *state, const uint8_t physical[LINK_
         (uint32_t)(now - state->last_activity) >= idle_timeout) {
         snapshot->mode = LINK_RAIN;
     }
+    // Limit continuous rain, including manually selected rain. Activity does
+    // not extend that limit. Only a fresh matrix press wakes timeout-off;
+    // encoder rotation and key releases cannot turn the panels back on.
+    if (state->timed_out) {
+        snapshot->mode = LINK_OFF;
+    }
+    if (snapshot->mode == LINK_RAIN) {
+        if (!state->rain_active) {
+            state->rain_started = now;
+        }
+        if ((uint32_t)(now - state->rain_started) >= LINK_SCREEN_RAIN_MAX_MS) {
+            state->timed_out = true;
+            state->selected_mode = LINK_DASHBOARD;
+            snapshot->mode = LINK_OFF;
+        }
+    }
+    state->rain_active = snapshot->mode == LINK_RAIN;
     snapshot->rain_frame = snapshot->mode == LINK_RAIN ? (uint16_t)(now / 50) : 0;
 }
 

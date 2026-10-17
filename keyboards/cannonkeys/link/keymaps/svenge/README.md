@@ -50,7 +50,14 @@ screen-control behavior in this edition.
   activity or encoder rotation, matching QMK's usual OLED timeout interval.
 - Holding a key, including either SpaceFN key, prevents automatic idle entry.
 - A key press/release or encoder rotation returns automatic rain to the dashboard.
-- Manually selected rain stays selected while typing until the next mode press.
+- Rain uses minimum OLED contrast/brightness (**0** on QMK's 0–255 scale),
+  restoring normal `OLED_BRIGHTNESS` on returning to the dashboard.
+- Both automatic and manual rain have a **10-minute continuous runtime limit**.
+  At that deadline both OLED controllers power off. Typing during manual rain
+  does not extend the limit. A fresh keypress wakes the dashboard; held keys,
+  releases and encoder rotation do not wake this timeout-off state.
+- Manually selected rain stays selected while typing until the next mode press
+  or the 10-minute deadline.
 - From automatic rain, the mode button advances directly to Off.
 - Manual Off powers down both OLED controllers and stays off while typing.
   The next right-encoder press returns to Dashboard.
@@ -58,7 +65,7 @@ screen-control behavior in this edition.
 
 Rain uses falling monochrome pixel streams with dithered tails and different
 patterns on the two physical halves. The old automatic OLED power-off timeout is
-disabled; the custom idle timer chooses rain instead. See the
+disabled; the custom timers choose dim rain and then power off instead. See the
 [animated preview](../../../../../previews/link/rain.gif).
 
 ## Saved layout and VIA
@@ -98,7 +105,9 @@ model, renderer, and QMK adapter against a small host shim. Coverage includes
 all Caps/Shift combinations, idle/wake and manual modes, held layer keys, short
 keypresses, timer wrap, frame bounds, physical mirroring, highest-layer display,
 weak/one-shot modifiers, right-button interception, split payload validation,
-RPC retry throttling, USB/master independence, and OLED power-down ordering.
+RPC retry throttling, USB/master independence, minimum rain brightness and
+restoration on both halves, the 10-minute deadline, wake rules, and OLED
+power-down ordering.
 
 The output is **`cannonkeys_link_svenge.uf2`** in the userspace root. Flash the
 same new UF2 to both halves when ready to test: the custom screen-state RPC needs

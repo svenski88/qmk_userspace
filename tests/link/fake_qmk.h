@@ -7,6 +7,7 @@
 #define QK_USER 0x7E40
 #define LINK_OLED_SYNC 12
 #define LINK_OLED_IDLE_TIMEOUT 60000UL
+#define OLED_BRIGHTNESS 255
 #define MATRIX_ROWS 10
 #define MATRIX_COLS 6
 typedef uint32_t layer_state_t;
@@ -29,6 +30,7 @@ led_t host_keyboard_led_state(void);
 void transaction_register_rpc(int8_t id, slave_callback_t callback);
 bool transaction_rpc_send(int8_t id, uint8_t length, const void *data);
 void oled_render_dirty(bool all);
+uint8_t oled_set_brightness(uint8_t level);
 bool oled_on(void);
 bool oled_off(void);
 void oled_write_raw(const char *data, uint16_t size);

@@ -99,6 +99,7 @@ bool oled_task_user(void) {
         oled_off();
         return false;
     }
+    oled_set_brightness(snapshot.mode == LINK_RAIN ? 0 : OLED_BRIGHTNESS);
     oled_on();
     link_screen_render(&snapshot, is_keyboard_left(), frame);
     oled_write_raw((const char *)frame, sizeof(frame));

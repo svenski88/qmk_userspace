@@ -14,6 +14,7 @@ static uint8_t physical[10], mods, weak_mods, oneshot;
 static bool caps;
 static slave_callback_t receiver;
 static unsigned attempts, drains, offs;
+static uint8_t brightness;
 static bool drained_before_off;
 static link_screen_snapshot_t sent;
 static uint8_t oled_frame[LINK_SCREEN_BYTES];
@@ -40,6 +41,7 @@ bool transaction_rpc_send(int8_t id, uint8_t length, const void *data) {
     ++attempts; memcpy(&sent, data, length); return rpc_ok;
 }
 void oled_render_dirty(bool all) { assert(all); ++drains; drained_before_off = true; }
+uint8_t oled_set_brightness(uint8_t level) { brightness = level; return level; }
 bool oled_on(void) { powered = true; return true; }
 bool oled_off(void) { assert(drained_before_off); drained_before_off = false; ++offs; powered = false; return true; }
 void oled_write_raw(const char *data, uint16_t size) { assert(size == sizeof(oled_frame)); memcpy(oled_frame, data, size); }
@@ -89,6 +91,41 @@ static void test_model(void) {
     snapshot.mode = 3; assert(!link_screen_snapshot_valid(&snapshot));
     snapshot.mode = 0; snapshot.layer = 32; assert(!link_screen_snapshot_valid(&snapshot));
     snapshot.layer = 2; snapshot.version = 255; assert(!link_screen_snapshot_valid(&snapshot));
+}
+
+static void test_rain_timeout(void) {
+    link_screen_state_t state;
+    link_screen_snapshot_t snapshot;
+    uint8_t keys[10] = {0};
+    link_screen_init(&state, 0);
+    update(&state, &snapshot, keys, 60000); assert(snapshot.mode == LINK_RAIN);
+    update(&state, &snapshot, keys, 659999); assert(snapshot.mode == LINK_RAIN);
+    update(&state, &snapshot, keys, 660000); assert(snapshot.mode == LINK_OFF);
+    link_screen_activity(&state, 660001); // Encoder rotation must not wake timeout-off.
+    update(&state, &snapshot, keys, 660001); assert(snapshot.mode == LINK_OFF);
+    keys[0] = 1;
+    update(&state, &snapshot, keys, 660002); assert(snapshot.mode == LINK_DASHBOARD);
+
+    // Manual rain's hard deadline is not extended by input or held keys.
+    link_screen_cycle(&state, snapshot.mode, 660003);
+    update(&state, &snapshot, keys, 660003); assert(snapshot.mode == LINK_RAIN);
+    keys[1] = 2;
+    update(&state, &snapshot, keys, 1260002); assert(snapshot.mode == LINK_RAIN);
+    update(&state, &snapshot, keys, 1260003); assert(snapshot.mode == LINK_OFF);
+    keys[1] = 0;
+    update(&state, &snapshot, keys, 1260004); assert(snapshot.mode == LINK_OFF);
+    keys[1] = 2;
+    update(&state, &snapshot, keys, 1260005); assert(snapshot.mode == LINK_DASHBOARD);
+
+    // Timeout arithmetic works across the 32-bit system timer wrap.
+    link_screen_init(&state, UINT32_MAX - 100);
+    memset(keys, 0, sizeof(keys));
+    link_screen_cycle(&state, LINK_DASHBOARD, UINT32_MAX - 100);
+    update(&state, &snapshot, keys, UINT32_MAX - 100);
+    update(&state, &snapshot, keys, 599898); assert(snapshot.mode == LINK_RAIN);
+    update(&state, &snapshot, keys, 599899); assert(snapshot.mode == LINK_OFF);
+    link_screen_cycle(&state, snapshot.mode, 599900);
+    update(&state, &snapshot, keys, 599900); assert(snapshot.mode == LINK_DASHBOARD);
 }
 
 static void test_render(void) {
@@ -155,6 +192,7 @@ static void test_adapter(void) {
     keyrecord_t button = {.event = {.key = {9, 5}, .pressed = true}};
     assert(!link_oled_process_record(0x1234, &button)); // Old VIA Play/Pause mapping is also intercepted.
     housekeeping_task_user(); assert(sent.mode == LINK_RAIN);
+    oled_task_user(); assert(powered && brightness == 0);
     button.event.pressed = false; assert(!link_oled_process_record(0x1234, &button));
     now = 125; button.event.pressed = true; link_oled_process_record(LINK_DISPLAY, &button);
     housekeeping_task_user(); assert(sent.mode == LINK_OFF);
@@ -162,7 +200,17 @@ static void test_adapter(void) {
     physical[0] = 1; now = 150; housekeeping_task_user(); oled_task_user();
     assert(!powered && sent.mode == LINK_OFF);
     now = 175; link_oled_process_record(LINK_DISPLAY, &button); housekeeping_task_user();
-    oled_task_user(); assert(powered && sent.mode == LINK_DASHBOARD);
+    oled_task_user(); assert(powered && sent.mode == LINK_DASHBOARD && brightness == OLED_BRIGHTNESS);
+    // The same dimming/restoration applies to the secondary physical panel.
+    master = false;
+    link_screen_snapshot_t remote = sent; remote.mode = LINK_RAIN;
+    receiver(sizeof(remote), &remote, 0, NULL); oled_task_user();
+    assert(powered && brightness == 0);
+    remote.mode = LINK_OFF; receiver(sizeof(remote), &remote, 0, NULL);
+    oled_task_user(); assert(!powered);
+    remote.mode = LINK_DASHBOARD; receiver(sizeof(remote), &remote, 0, NULL);
+    oled_task_user(); assert(powered && brightness == OLED_BRIGHTNESS);
+    master = true;
     button.event.key.row = 0; button.event.key.col = 0;
     assert(link_oled_process_record(0x0004, &button));
     assert(encoder_update_user(0, true));
@@ -193,7 +241,7 @@ static void write_preview(const char *directory) {
 }
 
 int main(int argc, char **argv) {
-    test_model(); test_render(); test_adapter();
+    test_model(); test_rain_timeout(); test_render(); test_adapter();
     if (argc == 2) { write_preview(argv[1]); }
     puts("PASS: mode cycle, idle/wake, held SpaceFN, XOR modifiers, mirrored keys, RPC sync/retry, off power, timer wrap, frame bounds");
     return 0;

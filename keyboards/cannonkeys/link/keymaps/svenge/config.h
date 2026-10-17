@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-// QMK's usual OLED timeout is 60 seconds. Use it to enter rain instead of power
-// saving; only manual OFF powers down the displays.
+// Enter dim rain at 60 seconds idle. The display model powers down after
+// ten minutes of continuous rain, or immediately when Off is selected.
 #define OLED_TIMEOUT 0
 #define OLED_UPDATE_INTERVAL 33
 #ifndef LINK_OLED_IDLE_TIMEOUT

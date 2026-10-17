@@ -12,6 +12,7 @@
 #define LINK_SCREEN_COLS 6
 #define LINK_SCREEN_KEY_FLASH_MS 100
 #define LINK_SCREEN_PROTOCOL 1
+#define LINK_SCREEN_RAIN_MAX_MS 600000UL
 
 enum link_screen_mode { LINK_DASHBOARD, LINK_RAIN, LINK_OFF };
 
@@ -31,6 +32,9 @@ typedef struct {
     uint8_t flashing[LINK_SCREEN_ROWS];
     uint32_t pressed_at[LINK_SCREEN_ROWS][LINK_SCREEN_COLS];
     uint32_t last_activity;
+    uint32_t rain_started;
+    bool rain_active;
+    bool timed_out;
 } link_screen_state_t;
 
 void link_screen_init(link_screen_state_t *state, uint32_t now);
