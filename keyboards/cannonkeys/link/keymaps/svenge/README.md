@@ -57,8 +57,15 @@ Press the physical right encoder to cycle both screens together:
 The button is electrical matrix **[9,5]**, the last slot of each VIA layer; it is
 a normal key switch, separate from the rotation mappings. It is reserved for
 screen control, so the former Play/Pause action is consumed even if VIA's current
-EEPROM map still contains that action. Left encoder push and both encoders'
-rotation actions remain as configured by the board/keymap.
+EEPROM map still contains that action. Left encoder push retains its mapping,
+and left encoder rotation retains volume control.
+
+Right encoder rotation adjusts the **normal brightness of both screens**:
+clockwise increases and counterclockwise decreases in steps of 16 on QMK's
+0–255 contrast scale, clamped at both endpoints. It replaces the board's
+Page Up/Down scrolling. Brightness applies to the dashboard and active dedicated
+rain. The setting starts at `OLED_BRIGHTNESS` after reboot and is not stored in
+EEPROM. Turning while Off updates the selected level without waking the panels.
 
 The compiled map names this action `LINK_DISPLAY` (`QK_USER`, **0x7E40**). VIA
 may show the raw value. It can also be assigned to another key using VIA's Any
@@ -69,8 +76,11 @@ screen-control behavior in this edition.
   activity or encoder rotation, matching QMK's usual OLED timeout interval.
 - Holding a key, including either SpaceFN key, prevents automatic idle entry.
 - A key press/release or encoder rotation returns automatic rain to the dashboard.
-- Rain uses minimum OLED contrast/brightness (**0** on QMK's 0–255 scale),
-  restoring normal `OLED_BRIGHTNESS` on returning to the dashboard.
+- Automatic screensaver rain always uses minimum brightness (**0**).
+- Dedicated rain uses the selected normal brightness during activity. After
+  **60 seconds idle**, it becomes a minimum-brightness screensaver while staying
+  in rain mode. Key activity or encoder rotation restores the selected normal
+  brightness and stays in dedicated rain. Holding a key prevents idle dimming.
 - Both automatic and manual rain have a **10-minute continuous runtime limit**.
   At that deadline both OLED controllers power off. Typing during manual rain
   does not extend the limit. A fresh keypress wakes the dashboard; held keys,
@@ -83,9 +93,20 @@ screen-control behavior in this edition.
 - Mode selection starts at Dashboard after a reboot; it is not written to EEPROM.
 
 Rain uses falling monochrome pixel streams with dithered tails and different
-patterns on the two physical halves. The old automatic OLED power-off timeout is
-disabled; the custom timers choose dim rain and then power off instead. See the
-[animated preview](../../../../../previews/link/rain.gif).
+patterns on the two physical halves. In dedicated rain, each physical keypress
+adds an extra falling trail on that key's half, including modifier/layer keys and
+otherwise unassigned switches. Releases, held keys and host repeats do not add
+trails. Eight simultaneous trails per half are retained; rapid bursts replace
+the oldest. Each trail leaves the screen after about 1.75 seconds. Fresh presses
+after idle dimming brighten dedicated rain and also add trails.
+
+The old automatic OLED power-off timeout is disabled; custom idle and continuous
+runtime timers select dim rain and then power off. Dimming or waking dedicated
+rain never resets the 10-minute continuous-rain deadline. See the
+[base rain preview](../../../../../previews/link/rain.gif) and
+[reactive rain preview](../../../../../previews/link/rain-reactive.gif). These are
+short repeating animation samples; their bitmap previews do not simulate the
+OLED controller's contrast setting.
 
 ## Saved layout and VIA
 
@@ -127,15 +148,18 @@ all Caps/Shift combinations, idle/wake and manual modes, held layer keys, short
 keypresses, timer wrap, frame bounds, physical mirroring, highest-layer display,
 weak/one-shot modifiers, right-button interception, split payload validation,
 RPC retry throttling, USB/master independence, minimum rain brightness and
-restoration on both halves, the 10-minute deadline, wake rules, and OLED
+restoration on both halves, encoder brightness limits, dedicated-vs-idle rain,
+per-half reactive trails and bounded bursts, the 10-minute deadline, wake rules, and OLED
 power-down ordering, one unique pixel per key without idle markers, per-half
 last-key persistence, resolved SpaceFN taps/holds, names and enlarged hex text,
 and rejection of old screen-state protocol versions.
 
 The output is **`cannonkeys_link_svenge.uf2`** in the userspace root. Flash the
 same new UF2 to both halves when ready to test: the custom screen-state RPC needs
-matching firmware on both. This edition uses screen-state protocol **2**; old
+matching firmware on both. This edition uses screen-state protocol **3**; old
 screen firmware cannot decode the new snapshot. No automated flashing is performed.
+The master-to-secondary custom RPC buffer is 64 bytes to carry both halves'
+active trails and effective brightness in one authoritative snapshot.
 
 For the wired Link, CannonKeys' build guide identifies the outer/left USB port
 on the left PCB as the computer connection. The other left port and the right

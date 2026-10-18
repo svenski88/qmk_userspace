@@ -8,6 +8,7 @@
 #define LINK_OLED_SYNC 12
 #define LINK_OLED_IDLE_TIMEOUT 60000UL
 #define OLED_BRIGHTNESS 255
+#define RPC_M2S_BUFFER_SIZE 64
 #define MATRIX_ROWS 10
 #define MATRIX_COLS 6
 typedef uint32_t layer_state_t;

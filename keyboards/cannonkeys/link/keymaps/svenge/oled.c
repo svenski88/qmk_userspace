@@ -7,6 +7,8 @@
 #include "transactions.h"
 #include <string.h>
 
+_Static_assert(sizeof(link_screen_snapshot_t) <= RPC_M2S_BUFFER_SIZE, "Screen state exceeds the split RPC payload");
+
 static link_screen_state_t state;
 static link_screen_snapshot_t snapshot;
 static link_screen_snapshot_t last_sent;
@@ -29,7 +31,9 @@ static void receive_screen(uint8_t length, const void *data, uint8_t out_length,
 
 void keyboard_post_init_user(void) {
     link_screen_init(&state, timer_read32());
+    state.normal_brightness = OLED_BRIGHTNESS;
     snapshot.version = LINK_SCREEN_PROTOCOL;
+    snapshot.brightness = state.normal_brightness;
     transaction_register_rpc(LINK_OLED_SYNC, receive_screen);
 }
 
@@ -58,12 +62,15 @@ bool link_oled_process_record(uint16_t keycode, keyrecord_t *record) {
 }
 
 bool encoder_update_user(uint8_t index, bool clockwise) {
-    (void)index;
-    (void)clockwise;
     if (is_keyboard_master()) {
+        if (index == 1) {
+            link_screen_adjust_brightness(&state, clockwise);
+        }
         link_screen_activity(&state, timer_read32());
     }
-    return true; // Preserve the keyboard's volume and page-up/down rotation actions.
+    // Consume the right encoder to suppress the board's Page Up/Down actions.
+    // The left encoder keeps its volume behavior. Push still cycles screen modes.
+    return index != 1;
 }
 
 void housekeeping_task_user(void) {
@@ -110,7 +117,7 @@ bool oled_task_user(void) {
         oled_off();
         return false;
     }
-    oled_set_brightness(snapshot.mode == LINK_RAIN ? 0 : OLED_BRIGHTNESS);
+    oled_set_brightness(snapshot.brightness);
     oled_on();
     link_screen_render(&snapshot, is_keyboard_left(), frame);
     oled_write_raw((const char *)frame, sizeof(frame));

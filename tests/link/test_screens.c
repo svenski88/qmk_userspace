@@ -128,6 +128,92 @@ static void test_rain_timeout(void) {
     update(&state, &snapshot, keys, 599900); assert(snapshot.mode == LINK_DASHBOARD);
 }
 
+static unsigned drop_count(const link_screen_snapshot_t *snapshot, unsigned side) {
+    unsigned count = 0;
+    for (unsigned i = 0; i < LINK_SCREEN_RAIN_DROPS; ++i) {
+        count += snapshot->rain_drops[side][i] != 0;
+    }
+    return count;
+}
+
+static void test_brightness_and_reactive_rain(void) {
+    link_screen_state_t state;
+    link_screen_snapshot_t snapshot;
+    uint8_t keys[10] = {0};
+    link_screen_init(&state, 0);
+    assert(state.normal_brightness == 255);
+    link_screen_adjust_brightness(&state, true); assert(state.normal_brightness == 255);
+    for (int i = 0; i < 32; ++i) { link_screen_adjust_brightness(&state, false); }
+    assert(state.normal_brightness == 0);
+    link_screen_adjust_brightness(&state, false); assert(state.normal_brightness == 0);
+    for (int i = 0; i < 32; ++i) { link_screen_adjust_brightness(&state, true); }
+    assert(state.normal_brightness == 255);
+    state.normal_brightness = 160;
+    update(&state, &snapshot, keys, 0); assert(snapshot.brightness == 160 && !snapshot.screensaver);
+    link_screen_cycle(&state, LINK_DASHBOARD, 1);
+    update(&state, &snapshot, keys, 1);
+    assert(snapshot.mode == LINK_RAIN && snapshot.brightness == 160 && !snapshot.screensaver);
+    keys[0] = 1;
+    update(&state, &snapshot, keys, 2);
+    assert(drop_count(&snapshot, 0) == 1 && drop_count(&snapshot, 1) == 0);
+    uint16_t first = snapshot.rain_drops[0][0];
+    update(&state, &snapshot, keys, 502); // Held key never creates more drops.
+    assert(drop_count(&snapshot, 0) == 1 && snapshot.rain_drops[0][0] > first);
+    keys[0] = 0; update(&state, &snapshot, keys, 503);
+    assert(drop_count(&snapshot, 0) == 1); // Release does not create a drop.
+    keys[0] = 1; update(&state, &snapshot, keys, 504);
+    assert(drop_count(&snapshot, 0) == 2);
+    keys[7] = 2; update(&state, &snapshot, keys, 505);
+    assert(drop_count(&snapshot, 0) == 2 && drop_count(&snapshot, 1) == 1);
+    update(&state, &snapshot, keys, 2255); // All trails have fully fallen offscreen.
+    assert(drop_count(&snapshot, 0) == 0 && drop_count(&snapshot, 1) == 0);
+    memset(keys, 0, sizeof(keys)); update(&state, &snapshot, keys, 2256);
+    update(&state, &snapshot, keys, 62255); assert(!snapshot.screensaver && snapshot.brightness == 160);
+    update(&state, &snapshot, keys, 62256);
+    assert(snapshot.mode == LINK_RAIN && snapshot.screensaver && snapshot.brightness == 0);
+    link_screen_adjust_brightness(&state, true); // Selected level cannot brighten an idle snapshot by itself.
+    update(&state, &snapshot, keys, 62257); assert(snapshot.brightness == 0 && state.normal_brightness == 176);
+    link_screen_activity(&state, 62258); // Turning the encoder restores active manual rain.
+    update(&state, &snapshot, keys, 62258);
+    assert(snapshot.mode == LINK_RAIN && !snapshot.screensaver && snapshot.brightness == 176);
+    update(&state, &snapshot, keys, 600001); // Dimming/waking did not restart the hard deadline.
+    assert(snapshot.mode == LINK_OFF);
+    keys[0] = 1; update(&state, &snapshot, keys, 600002);
+    assert(snapshot.mode == LINK_DASHBOARD && snapshot.brightness == 176);
+
+    // Automatic screensaver always stays at minimum, then restores dashboard brightness.
+    link_screen_init(&state, 0); state.normal_brightness = 80;
+    memset(keys, 0, sizeof(keys)); update(&state, &snapshot, keys, 60000);
+    assert(snapshot.mode == LINK_RAIN && snapshot.screensaver && snapshot.brightness == 0);
+    keys[1] = 4; update(&state, &snapshot, keys, 60001);
+    assert(snapshot.mode == LINK_DASHBOARD && snapshot.brightness == 80 && !drop_count(&snapshot, 0));
+
+    // Simultaneous/burst input is bounded to eight live trails on each half.
+    link_screen_cycle(&state, LINK_DASHBOARD, 60002);
+    memset(keys, 0x3F, sizeof(keys)); update(&state, &snapshot, keys, 60002);
+    assert(drop_count(&snapshot, 0) == LINK_SCREEN_RAIN_DROPS && drop_count(&snapshot, 1) == LINK_SCREEN_RAIN_DROPS);
+    assert(link_screen_snapshot_valid(&snapshot));
+    assert(sizeof(snapshot) <= RPC_M2S_BUFFER_SIZE);
+    snapshot.rain_drops[1][0] = LINK_SCREEN_DROP_TICKS * 64 + 1;
+    assert(!link_screen_snapshot_valid(&snapshot));
+    snapshot.rain_drops[1][0] = 0; snapshot.screensaver = 2;
+    assert(!link_screen_snapshot_valid(&snapshot));
+    snapshot.screensaver = 1; snapshot.brightness = 1;
+    assert(!link_screen_snapshot_valid(&snapshot));
+    snapshot.brightness = 0; snapshot.mode = LINK_DASHBOARD;
+    assert(!link_screen_snapshot_valid(&snapshot));
+
+    // Drop age also works across the millisecond timer rollover.
+    link_screen_init(&state, UINT32_MAX - 100);
+    link_screen_cycle(&state, LINK_DASHBOARD, UINT32_MAX - 100);
+    memset(keys, 0, sizeof(keys)); keys[5] = 1;
+    update(&state, &snapshot, keys, UINT32_MAX - 99);
+    assert(drop_count(&snapshot, 1) == 1);
+    update(&state, &snapshot, keys, 0);
+    assert(((snapshot.rain_drops[1][0] - 1) >> 6) == 2);
+    update(&state, &snapshot, keys, 1650); assert(drop_count(&snapshot, 1) == 0);
+}
+
 static void test_render(void) {
     struct { uint8_t pre[16], frame[1024], post[16]; } guarded;
     uint8_t right_frame[1024], before[1024];
@@ -191,6 +277,17 @@ static void test_render(void) {
         snapshot.rain_frame = tick;
         link_screen_render(&snapshot, tick % 2, guarded.frame);
     }
+    link_screen_render(&snapshot, true, before);
+    link_screen_render(&snapshot, false, right_frame);
+    int drop_x = 0;
+    while (bit(before, drop_x, 40)) { ++drop_x; }
+    assert(drop_x < 64);
+    snapshot.rain_drops[0][0] = 1 + 10 * 64 + drop_x;
+    link_screen_render(&snapshot, true, guarded.frame);
+    assert(bit(guarded.frame, drop_x, 40) && memcmp(before, guarded.frame, 1024));
+    link_screen_render(&snapshot, false, guarded.frame);
+    assert(!memcmp(right_frame, guarded.frame, 1024)); // A left press adds no right-side trail.
+    snapshot.rain_drops[0][0] = 0;
     memcpy(before, guarded.frame, sizeof(before)); ++snapshot.rain_frame;
     link_screen_render(&snapshot, true, guarded.frame);
     assert(memcmp(before, guarded.frame, sizeof(before)) != 0);
@@ -268,7 +365,7 @@ static void test_adapter(void) {
     assert(!link_oled_process_record(0x1234, &button)); // Old VIA Play/Pause mapping is also intercepted.
     housekeeping_task_user(); assert(sent.mode == LINK_RAIN);
     assert(sent.last_key_valid == 2 && sent.last_key[1] == LINK_DISPLAY);
-    oled_task_user(); assert(powered && brightness == 0);
+    oled_task_user(); assert(powered && brightness == OLED_BRIGHTNESS);
     button.event.pressed = false; assert(!link_oled_process_record(0x1234, &button));
     now = 125; button.event.pressed = true; link_oled_process_record(LINK_DISPLAY, &button);
     housekeeping_task_user(); assert(sent.mode == LINK_OFF);
@@ -279,12 +376,12 @@ static void test_adapter(void) {
     oled_task_user(); assert(powered && sent.mode == LINK_DASHBOARD && brightness == OLED_BRIGHTNESS);
     // The same dimming/restoration applies to the secondary physical panel.
     master = false;
-    link_screen_snapshot_t remote = sent; remote.mode = LINK_RAIN;
+    link_screen_snapshot_t remote = sent; remote.mode = LINK_RAIN; remote.screensaver = 1; remote.brightness = 0;
     receiver(sizeof(remote), &remote, 0, NULL); oled_task_user();
     assert(powered && brightness == 0);
-    remote.mode = LINK_OFF; receiver(sizeof(remote), &remote, 0, NULL);
+    remote.mode = LINK_OFF; remote.screensaver = 0; receiver(sizeof(remote), &remote, 0, NULL);
     oled_task_user(); assert(!powered);
-    remote.mode = LINK_DASHBOARD; receiver(sizeof(remote), &remote, 0, NULL);
+    remote.mode = LINK_DASHBOARD; remote.brightness = OLED_BRIGHTNESS; receiver(sizeof(remote), &remote, 0, NULL);
     oled_task_user(); assert(powered && brightness == OLED_BRIGHTNESS);
     master = true;
     button.event.key.row = 0; button.event.key.col = 0;
@@ -329,6 +426,34 @@ static void test_adapter(void) {
     receiver(sizeof(remote), &remote, 0, NULL); oled_task_user();
     assert(!memcmp(expected, oled_frame, sizeof(expected)));
     master = true; left = true;
+    // Right rotation changes brightness without reaching the board's PgUp/PgDn
+    // handler. Left volume is retained, and shared brightness reaches the slave.
+    now = 450; assert(!encoder_update_user(1, false)); housekeeping_task_user();
+    assert(sent.brightness == 239);
+    oled_task_user(); assert(brightness == 239);
+    master = false; receiver(sizeof(sent), &sent, 0, NULL); oled_task_user(); assert(brightness == 239);
+    assert(!encoder_update_user(1, true)); // A non-master callback cannot change authoritative state.
+    master = true; now = 475; housekeeping_task_user(); assert(sent.brightness == 239);
+    now = 500; assert(encoder_update_user(0, true)); housekeeping_task_user(); assert(sent.brightness == 239);
+    now = 525; assert(!encoder_update_user(1, true)); housekeeping_task_user(); assert(sent.brightness == 255);
+    // Automatic rain remains dim; right rotation restores the selected dashboard level.
+    memset(physical, 0, sizeof(physical)); now = 550; housekeeping_task_user();
+    now = 60550; housekeeping_task_user(); oled_task_user();
+    assert(sent.mode == LINK_RAIN && sent.screensaver && brightness == 0);
+    now = 60575; assert(!encoder_update_user(1, false)); housekeeping_task_user(); oled_task_user();
+    assert(sent.mode == LINK_DASHBOARD && !sent.screensaver && brightness == 239);
+    // Dedicated rain keeps that level, adds a drop on the physical right, and
+    // transmits the trail to the remote renderer without a second local event.
+    button.event.key.row = 9; button.event.key.col = 5; button.event.pressed = true;
+    now = 60600; link_oled_process_record(LINK_DISPLAY, &button); housekeeping_task_user();
+    physical[6] = 4; now = 60625; housekeeping_task_user(); oled_task_user();
+    assert(sent.mode == LINK_RAIN && sent.brightness == 239 && drop_count(&sent, 1) == 1);
+    master = false; left = false; receiver(sizeof(sent), &sent, 0, NULL); oled_task_user();
+    assert(brightness == 239);
+    link_screen_render(&sent, false, expected); assert(!memcmp(expected, oled_frame, sizeof(expected)));
+    remote = sent; remote.version = 2; remote.brightness = 123;
+    receiver(sizeof(remote), &remote, 0, NULL); oled_task_user(); assert(brightness == 239);
+    master = true; left = true;
 }
 
 static void write_preview(const char *directory) {
@@ -361,11 +486,27 @@ static void write_preview(const char *directory) {
         }
     }
     fclose(file);
+    snprintf(path, sizeof(path), "%s/rain-reactive.raw", directory);
+    file = fopen(path, "wb"); assert(file);
+    link_screen_state_t state;
+    link_screen_init(&state, 0);
+    link_screen_cycle(&state, LINK_DASHBOARD, 0);
+    uint8_t keys[10] = {0};
+    for (int tick = 0; tick < 96; ++tick) {
+        memset(keys, 0, sizeof(keys));
+        if (tick % 5 == 0) { keys[(tick / 5) % 4] = 1 << ((tick / 5) % 6); }
+        if (tick % 7 == 0) { keys[5 + (tick / 7) % 4] = 1 << ((tick / 7) % 6); }
+        update(&state, &snapshot, keys, tick * 50);
+        for (int left = 1; left >= 0; --left) {
+            link_screen_render(&snapshot, left, frame); assert(fwrite(frame, 1, sizeof(frame), file) == sizeof(frame));
+        }
+    }
+    fclose(file);
 }
 
 int main(int argc, char **argv) {
-    test_model(); test_rain_timeout(); test_render(); test_last_keys(); test_adapter();
+    test_model(); test_rain_timeout(); test_brightness_and_reactive_rain(); test_render(); test_last_keys(); test_adapter();
     if (argc == 2) { write_preview(argv[1]); }
-    puts("PASS: compact mirrored pixels, names/hex, per-half persistence, SpaceFN resolution, RPC v2, rounded indicators, modes/rain timeout/brightness, timer wrap, frame bounds");
+    puts("PASS: brightness encoder/clamps/sync, active-vs-idle rain, reactive trails/burst/expiry/wrap, RPC v3, dashboard pixels/names/SpaceFN, rain hard deadline and wake rules");
     return 0;
 }

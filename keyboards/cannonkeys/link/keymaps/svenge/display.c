@@ -5,15 +5,32 @@
 #include "keycodes.h"
 #include <string.h>
 
-_Static_assert(sizeof(link_screen_snapshot_t) <= 32, "Display snapshot exceeds QMK's default RPC buffer");
+_Static_assert(sizeof(link_screen_snapshot_t) <= 64, "Display snapshot exceeds the configured RPC buffer");
 
 void link_screen_init(link_screen_state_t *state, uint32_t now) {
     memset(state, 0, sizeof(*state));
     state->last_activity = now;
+    state->normal_brightness = 255;
 }
 
 void link_screen_activity(link_screen_state_t *state, uint32_t now) {
     state->last_activity = now;
+}
+
+void link_screen_adjust_brightness(link_screen_state_t *state, bool clockwise) {
+    int level = state->normal_brightness + (clockwise ? LINK_SCREEN_BRIGHTNESS_STEP : -LINK_SCREEN_BRIGHTNESS_STEP);
+    state->normal_brightness = level < 0 ? 0 : level > 255 ? 255 : level;
+}
+
+static void add_drop(link_screen_state_t *state, uint8_t row, uint8_t col, uint32_t now) {
+    uint8_t side = row / 5;
+    link_screen_drop_t *drop = &state->rain_drops[side][state->next_drop[side]];
+    state->next_drop[side] = (state->next_drop[side] + 1) % LINK_SCREEN_RAIN_DROPS;
+    // Vary the column per press, including repeated presses of the same key.
+    uint32_t seed = ++state->drop_sequence * 1103515245UL + (row * 6 + col) * 12345UL;
+    drop->started = now;
+    drop->x = (seed >> 16) & 63;
+    drop->active = true;
 }
 
 void link_screen_keypress(link_screen_state_t *state, uint8_t row, uint8_t col, uint16_t keycode) {
@@ -31,6 +48,8 @@ void link_screen_cycle(link_screen_state_t *state, uint8_t visible_mode, uint32_
     state->selected_mode = (visible_mode + 1) % 3;
     state->rain_active = false;
     state->timed_out = false;
+    memset(state->rain_drops, 0, sizeof(state->rain_drops));
+    memset(state->next_drop, 0, sizeof(state->next_drop));
     link_screen_activity(state, now);
 }
 
@@ -62,6 +81,9 @@ void link_screen_update(link_screen_state_t *state, const uint8_t physical[LINK_
             if (rising & bit) {
                 state->flashing[row] |= bit;
                 state->pressed_at[row][col] = now;
+                if (state->selected_mode == LINK_RAIN && !state->timed_out) {
+                    add_drop(state, row, col, now);
+                }
             }
             if (state->flashing[row] & bit) {
                 if ((uint32_t)(now - state->pressed_at[row][col]) < LINK_SCREEN_KEY_FLASH_MS) {
@@ -73,8 +95,8 @@ void link_screen_update(link_screen_state_t *state, const uint8_t physical[LINK_
         }
     }
     snapshot->mode = state->selected_mode;
-    if (snapshot->mode == LINK_DASHBOARD && idle_timeout && !held &&
-        (uint32_t)(now - state->last_activity) >= idle_timeout) {
+    bool idle = idle_timeout && !held && (uint32_t)(now - state->last_activity) >= idle_timeout;
+    if (snapshot->mode == LINK_DASHBOARD && idle) {
         snapshot->mode = LINK_RAIN;
     }
     // Limit continuous rain, including manually selected rain. Activity does
@@ -95,16 +117,38 @@ void link_screen_update(link_screen_state_t *state, const uint8_t physical[LINK_
     }
     state->rain_active = snapshot->mode == LINK_RAIN;
     snapshot->rain_frame = snapshot->mode == LINK_RAIN ? (uint16_t)(now / 50) : 0;
+    snapshot->screensaver = snapshot->mode == LINK_RAIN && idle;
+    snapshot->brightness = snapshot->screensaver ? 0 : state->normal_brightness;
+    for (uint8_t side = 0; side < 2; ++side) {
+        for (uint8_t i = 0; i < LINK_SCREEN_RAIN_DROPS; ++i) {
+            link_screen_drop_t *drop = &state->rain_drops[side][i];
+            uint32_t age = (uint32_t)(now - drop->started) / 50;
+            if (snapshot->mode != LINK_RAIN || age >= LINK_SCREEN_DROP_TICKS) {
+                drop->active = false;
+            }
+            if (drop->active) {
+                snapshot->rain_drops[side][i] = 1 + age * 64 + drop->x;
+            }
+        }
+    }
 }
 
 bool link_screen_snapshot_valid(const link_screen_snapshot_t *snapshot) {
     if (snapshot->version != LINK_SCREEN_PROTOCOL || snapshot->mode > LINK_OFF ||
-        snapshot->caps_lock > 1 || snapshot->layer > 31 || snapshot->last_key_valid > 3) {
+        snapshot->caps_lock > 1 || snapshot->layer > 31 || snapshot->last_key_valid > 3 ||
+        snapshot->screensaver > 1 || (snapshot->screensaver && (snapshot->mode != LINK_RAIN || snapshot->brightness != 0))) {
         return false;
     }
     for (uint8_t row = 0; row < LINK_SCREEN_ROWS; ++row) {
         if (snapshot->keys[row] & ~0x3F) {
             return false;
+        }
+    }
+    for (uint8_t side = 0; side < 2; ++side) {
+        for (uint8_t i = 0; i < LINK_SCREEN_RAIN_DROPS; ++i) {
+            if (snapshot->rain_drops[side][i] > LINK_SCREEN_DROP_TICKS * 64) {
+                return false;
+            }
         }
     }
     return true;
@@ -368,7 +412,8 @@ static void indicator(uint8_t *frame, const char *label, int y, bool active) {
     text(frame, label, y + 7, 2, !active);
 }
 
-static void rain(uint8_t *frame, bool left, uint16_t tick) {
+static void rain(uint8_t *frame, const link_screen_snapshot_t *snapshot, bool left) {
+    uint16_t tick = snapshot->rain_frame;
     for (uint32_t stream = 0; stream < 16; ++stream) {
         uint32_t seed = (stream + 1) * 1103515245u + (left ? 12345u : 98765u);
         int tail = 12 + (seed >> 16) % 25;
@@ -385,6 +430,21 @@ static void rain(uint8_t *frame, bool left, uint16_t tick) {
             }
         }
     }
+    // Extra finite-lifetime trails follow raw physical press edges, so a held
+    // key, host repeat, or a delayed SpaceFN resolution cannot spawn duplicates.
+    for (uint8_t i = 0; i < LINK_SCREEN_RAIN_DROPS; ++i) {
+        uint16_t packed = snapshot->rain_drops[left ? 0 : 1][i];
+        if (!packed) {
+            continue;
+        }
+        int x = (packed - 1) & 63;
+        int head = ((packed - 1) >> 6) * 4;
+        for (int offset = 0; offset < 12; ++offset) {
+            if (offset < 3 || offset % 3 == 0) {
+                pixel(frame, x, head - offset, true);
+            }
+        }
+    }
 }
 
 void link_screen_render(const link_screen_snapshot_t *snapshot, bool left, uint8_t frame[LINK_SCREEN_BYTES]) {
@@ -393,7 +453,7 @@ void link_screen_render(const link_screen_snapshot_t *snapshot, bool left, uint8
         return;
     }
     if (snapshot->mode == LINK_RAIN) {
-        rain(frame, left, snapshot->rain_frame);
+        rain(frame, snapshot, left);
         return;
     }
     keyboard(frame, snapshot, left);

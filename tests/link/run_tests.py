@@ -41,6 +41,9 @@ def preview(directory):
     data = (directory / "rain.raw").read_bytes()
     frames = [pair(data[i:i+2048], "MATRIX RAIN - BOTH PHYSICAL HALVES") for i in range(0, len(data), 2048)]
     frames[0].save(output / "rain.gif", save_all=True, append_images=frames[1:], duration=50, loop=0)
+    data = (directory / "rain-reactive.raw").read_bytes()
+    frames = [pair(data[i:i+2048], "DEDICATED RAIN: EXTRA TRAILS FROM SIMULATED PRESSES") for i in range(0, len(data), 2048)]
+    frames[0].save(output / "rain-reactive.gif", save_all=True, append_images=frames[1:], duration=50, loop=0)
     print(f"Previews: {output}")
 
 
