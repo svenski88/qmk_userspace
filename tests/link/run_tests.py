@@ -9,6 +9,7 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 USERSPACE = HERE.parents[1]
 KEYMAP = USERSPACE / "keyboards/cannonkeys/link/keymaps/svenge"
+FIRMWARE = Path(os.environ.get("QMK_HOME", USERSPACE.parent / "qmk_firmware"))
 GCC = os.environ.get("CC") or shutil.which("gcc") or "C:/UTIL/QMK_MSYS/mingw64/bin/gcc.exe"
 ENV = os.environ.copy()
 ENV["PATH"] = str(Path(GCC).resolve().parent) + os.pathsep + ENV["PATH"]
@@ -36,6 +37,7 @@ def preview(directory):
     output = USERSPACE / "previews/link"
     output.mkdir(parents=True, exist_ok=True)
     pair((directory / "dashboard.raw").read_bytes(), "LEFT: CTRL / CAPS XOR / ALT                 RIGHT: ACTIVE LAYER").save(output / "dashboard.png")
+    pair((directory / "dashboard-live.raw").read_bytes(), "FIRMWARE RENDERER: SAMPLE PRESSES + LAST RESOLVED KEYS").save(output / "dashboard-live.png")
     data = (directory / "rain.raw").read_bytes()
     frames = [pair(data[i:i+2048], "MATRIX RAIN - BOTH PHYSICAL HALVES") for i in range(0, len(data), 2048)]
     frames[0].save(output / "rain.gif", save_all=True, append_images=frames[1:], duration=50, loop=0)
@@ -54,6 +56,7 @@ def main():
         subprocess.run([
             GCC, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2",
             '-DQMK_KEYBOARD_H="quantum.h"', "-I", str(tmp), "-I", str(HERE), "-I", str(KEYMAP),
+            "-I", str(FIRMWARE / "quantum"),
             str(KEYMAP / "display.c"), str(KEYMAP / "oled.c"), str(HERE / "test_screens.c"), "-o", str(executable),
         ], env=ENV, check=True)
         subprocess.run([str(executable), *([str(tmp)] if args.preview else [])], env=ENV, check=True)

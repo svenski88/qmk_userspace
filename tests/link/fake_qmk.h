@@ -3,8 +3,8 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "keycodes.h"
 
-#define QK_USER 0x7E40
 #define LINK_OLED_SYNC 12
 #define LINK_OLED_IDLE_TIMEOUT 60000UL
 #define OLED_BRIGHTNESS 255
@@ -13,7 +13,10 @@
 typedef uint32_t layer_state_t;
 typedef uint8_t matrix_row_t;
 typedef enum { OLED_ROTATION_0, OLED_ROTATION_90 } oled_rotation_t;
-typedef struct { struct { struct { uint8_t row, col; } key; bool pressed; } event; } keyrecord_t;
+typedef struct {
+    struct { struct { uint8_t row, col; } key; bool pressed; } event;
+    struct { uint8_t count; } tap;
+} keyrecord_t;
 typedef struct { bool caps_lock; } led_t;
 typedef void (*slave_callback_t)(uint8_t, const void *, uint8_t, void *);
 

@@ -39,9 +39,20 @@ bool link_oled_process_record(uint16_t keycode, keyrecord_t *record) {
     bool right_encoder = record->event.key.row == 9 && record->event.key.col == 5;
     if (keycode == LINK_DISPLAY || right_encoder) {
         if (record->event.pressed && is_keyboard_master()) {
+            link_screen_keypress(&state, record->event.key.row, record->event.key.col, LINK_DISPLAY);
             link_screen_cycle(&state, snapshot.mode, timer_read32());
         }
         return false;
+    }
+    if (record->event.pressed && is_keyboard_master()) {
+        // QMK's tapping engine settles tap/hold before process_record_user.
+        // For a tap report the underlying key; for a hold retain the LT/MT
+        // code so its name and hex identify the action that actually resolved.
+        uint16_t resolved = keycode;
+        if ((IS_QK_LAYER_TAP(keycode) || IS_QK_MOD_TAP(keycode)) && record->tap.count) {
+            resolved = keycode & 0xFF;
+        }
+        link_screen_keypress(&state, record->event.key.row, record->event.key.col, resolved);
     }
     return true;
 }

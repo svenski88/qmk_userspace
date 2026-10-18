@@ -5,11 +5,27 @@ Use `feature/link-oled` in both the firmware and userspace repositories.
 
 ## Dashboard
 
-Both displays use portrait 64x128 drawing, independent of which half has USB.
-At the top, each screen shows only its own physical half: finger columns,
-thumb cluster and encoder push, mirrored between left and right. Pressed keys
-fill in. Short presses remain highlighted for at least 100 ms so quick taps are
-visible through screen refresh and split synchronization.
+Both displays use portrait 64x128 drawing. Each screen's top outside corner
+contains a compact outline of its physical keyboard half, including a solid
+2x6-pixel miniature screen. Finger columns, thumb cluster and encoder push are
+mirrored between left and right. Only pressed keys appear as individual pixels;
+unpressed positions remain empty. Short presses remain highlighted for at least
+100 ms so quick taps are visible through refresh and split synchronization.
+
+Beside each outline is the last key's readable name, with its hexadecimal QMK
+keycode enlarged to 35x8 pixels above the underline. Each half retains its own
+last press until another action is pressed on that half. Releases, unassigned
+keys and virtual encoder rotation events do not replace it. These fields start
+blank after reboot and survive mode changes during that session.
+
+Names describe resolved QMK actions, not characters produced by the host OS.
+For example, `ESC` is `0X0029` and `SPACE` is `0X002C`. A SpaceFN tap shows
+`SPACE` / `0X002C`; a hold shows `LT1` / `0X412C` or `LT2` / `0X422C` once QMK
+settles tap versus hold. Momentary layers show `MO1`, etc. Held modifiers retain
+their keycode, modified-key chords show `CHORD`, and unknown actions show `KEY`
+with their exact hex value. The reserved screen button shows `OLED` / `0X7E40`.
+Normal key names use double-size text; longer names shrink to fit the inside
+area without overlapping the keyboard silhouette.
 
 The physical left screen uses the remaining area for large indicators:
 
@@ -17,8 +33,9 @@ The physical left screen uses the remaining area for large indicators:
 - **CAPS:** host Caps Lock XOR either Shift, matching the WT75-C indicator.
 - **ALT:** either Alt modifier is active.
 
-Active panels are filled with inverted text. Weak and one-shot modifiers are
-included. These indicators stay on the physical left, even if USB is on the right.
+Active panels have rounded fills and inverted text. Inactive indicators have
+white labels with no box outline. Weak and one-shot modifiers are included.
+These indicators always stay on the physical left.
 
 The physical right screen shows **LAYER** and a large numeric active layer.
 It reads QMK's effective layer state, including default layers. Your
@@ -26,8 +43,10 @@ It reads QMK's effective layer state, including default layers. Your
 actually resolves them as holds. No guessed QWERTY/Colemak/Raise/Lower names are
 displayed. If multiple layers are active, the highest active layer is shown.
 
-See the [dashboard preview](../../../../../previews/link/dashboard.png), generated
-from the same renderer used by the firmware.
+See the [all-keys-lit dashboard preview](../../../../../previews/link/dashboard.png)
+and [sample-keypress preview](../../../../../previews/link/dashboard-live.png),
+generated from the same renderer used by the firmware. All-keys-lit is only a
+preview fixture; on the device, pixels light only while pressed or briefly after.
 
 ## Right encoder push and idle behavior
 
@@ -100,21 +119,33 @@ python tests/link/run_tests.py
 python tests/link/run_tests.py --preview
 ```
 
-The preview option additionally needs Pillow. Tests compile the actual display
-model, renderer, and QMK adapter against a small host shim. Coverage includes
+The preview option additionally needs Pillow. The tests use the sibling
+`qmk_firmware` checkout's real keycode definitions (override its path with
+`QMK_HOME` if needed). Tests compile the actual display model, renderer, and
+QMK adapter against a small host shim. Coverage includes
 all Caps/Shift combinations, idle/wake and manual modes, held layer keys, short
 keypresses, timer wrap, frame bounds, physical mirroring, highest-layer display,
 weak/one-shot modifiers, right-button interception, split payload validation,
 RPC retry throttling, USB/master independence, minimum rain brightness and
 restoration on both halves, the 10-minute deadline, wake rules, and OLED
-power-down ordering.
+power-down ordering, one unique pixel per key without idle markers, per-half
+last-key persistence, resolved SpaceFN taps/holds, names and enlarged hex text,
+and rejection of old screen-state protocol versions.
 
 The output is **`cannonkeys_link_svenge.uf2`** in the userspace root. Flash the
 same new UF2 to both halves when ready to test: the custom screen-state RPC needs
-matching firmware on both. No automated flashing is performed.
+matching firmware on both. This edition uses screen-state protocol **2**; old
+screen firmware cannot decode the new snapshot. No automated flashing is performed.
+
+For the wired Link, CannonKeys' build guide identifies the outer/left USB port
+on the left PCB as the computer connection. The other left port and the right
+PCB port are the split interconnect. Do not assume the right interconnect port
+can be used as a normal USB programming port. Establish the right PCB's actual
+programming/recovery procedure before changing only one half's firmware.
+`QK_BOOT` acts on the controller processing the keycode, not the remote half.
 
 Firmware build, strict lint and host tests pass. Physical OLED orientation,
-contrast, full split operation with USB connected to either side, and responsiveness
+contrast, full split operation, and responsiveness
 must still be verified on the keyboard. Both displays currently use rotation 0;
 adjust `oled_init_user()` if a panel is physically mounted in another orientation.
 
